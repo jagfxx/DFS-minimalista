@@ -172,7 +172,7 @@ def get(remote_path, local_path):
                                 md5_hash.update(chunk)
                                 
                     if b.get("checksum") and md5_hash.hexdigest() != b["checksum"]:
-                        print(f"⚠️ Bloque corrupto detectado en {node['host']} (MD5 mismatch). Saltando a la réplica...")
+                        print(f" Bloque corrupto detectado en {node['host']} (MD5 mismatch). Saltando a la réplica...")
                         os.remove(tmp_block)
                         continue
                         

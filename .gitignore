@@ -1,3 +1,4 @@
+# Entornos virtuales e IA
 .antigravitycli/
 .gemini/
 venv/
@@ -5,6 +6,8 @@ env/
 __pycache__/
 *.pyc
 .env
+
+# Archivos de la tarea o planeación que no pertenecen al código base
 taller.md
 PreInforme_DFS_*.md
 walkthrough.md

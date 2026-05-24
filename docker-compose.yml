@@ -33,6 +33,42 @@ services:
       namenode:
         condition: service_healthy
 
+  datanode2:
+    build:
+      context: ./datanode
+    environment:
+      - DATANODE_ID=dn2
+      - NAMENODE_URL=http://namenode:8000
+      - REPORTED_HOST=localhost
+      - REPORTED_PORT=8002
+      - BLOCK_SIZE_MB=64
+    ports:
+      - "8002:8000"
+    volumes:
+      - dn2_data:/app/data
+    depends_on:
+      namenode:
+        condition: service_healthy
+
+  datanode3:
+    build:
+      context: ./datanode
+    environment:
+      - DATANODE_ID=dn3
+      - NAMENODE_URL=http://namenode:8000
+      - REPORTED_HOST=localhost
+      - REPORTED_PORT=8003
+      - BLOCK_SIZE_MB=64
+    ports:
+      - "8003:8000"
+    volumes:
+      - dn3_data:/app/data
+    depends_on:
+      namenode:
+        condition: service_healthy
+
 volumes:
   namenode_data:
   dn1_data:
+  dn2_data:
+  dn3_data:

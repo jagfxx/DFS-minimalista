@@ -87,7 +87,7 @@ def login(user: UserCreate):
         access_token = create_access_token(data={"sub": row["id"]})
         return {"access_token": access_token, "token_type": "bearer"}
 
-# ==================== DIRECTORY MANAGEMENT ====================
+# ==================== DIRECTORY & FILE MANAGEMENT ====================
 class PathReq(BaseModel):
     path: str
 
