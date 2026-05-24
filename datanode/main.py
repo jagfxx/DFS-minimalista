@@ -29,6 +29,7 @@ async def startup_event():
     asyncio.create_task(heartbeat_loop())
 
 async def heartbeat_loop():
+    """Bucle asíncrono para enviar heartbeats y el Block Report (con hashes MD5) al NameNode."""
     while True:
         try:
             # Obtener espacio libre (muy básico para simular en Linux)
