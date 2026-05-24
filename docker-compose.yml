@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  namenode:
+    build:
+      context: ./namenode
+    environment:
+      - JWT_SECRET=super_secret_key_dfs_2026
+    ports:
+      - "8000:8000"
+    volumes:
+      - namenode_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  datanode1:
+    build:
+      context: ./datanode
+    environment:
+      - DATANODE_ID=dn1
+      - NAMENODE_URL=http://namenode:8000
+      - REPORTED_HOST=localhost
+      - REPORTED_PORT=8001
+      - BLOCK_SIZE_MB=64
+    ports:
+      - "8001:8000"
+    volumes:
+      - dn1_data:/app/data
+    depends_on:
+      namenode:
+        condition: service_healthy
+
+volumes:
+  namenode_data:
+  dn1_data:
