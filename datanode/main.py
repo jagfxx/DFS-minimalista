@@ -72,6 +72,7 @@ async def heartbeat_loop():
         await asyncio.sleep(5)
 
 def delete_local_block(block_id: str):
+    """Ejecuta el Garbage Collection eliminando físicamente el archivo y su MD5."""
     file_path = os.path.join(DATA_DIR, block_id)
     md5_path = file_path + ".md5"
     if os.path.exists(file_path):
@@ -81,6 +82,7 @@ def delete_local_block(block_id: str):
         os.remove(md5_path)
 
 async def replicate_block(block_id: str, source_url: str):
+    """Clona un bloque desde otro DataNode en tiempo real (Self-Healing)."""
     logger.info(f"Replicando bloque {block_id} desde {source_url}...")
     try:
         file_path = os.path.join(DATA_DIR, block_id)
