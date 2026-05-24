@@ -1,6 +1,8 @@
 from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel
 import sqlite3
+import uuid
+import random
 import os
 from typing import List, Optional, Dict, Any
 
@@ -8,6 +10,9 @@ from database import init_db, get_db_connection
 from auth import get_password_hash, verify_password, create_access_token, get_current_user_id
 
 app = FastAPI(title="DFS NameNode")
+
+BLOCK_SIZE_MB = int(os.environ.get("BLOCK_SIZE_MB", 64))
+BLOCK_SIZE_BYTES = BLOCK_SIZE_MB * 1024 * 1024
 
 @app.on_event("startup")
 def startup_event():
@@ -140,4 +145,110 @@ def remove_directory(req: PathReq, user_id: int = Depends(get_current_user_id)):
         cursor.execute("DELETE FROM files WHERE id=?", (target_dir_id,))
         conn.commit()
         return {"message": "Directorio eliminado exitosamente"}
->>>>>>> 865f722 (feat(namenode): operaciones de directorios virtuales)
+
+# ==================== FILE ALLOCATION (PUT) ====================
+class AllocateReq(BaseModel):
+    path: str
+    file_size: int
+
+@app.post("/files/allocate")
+def allocate_blocks(req: AllocateReq, user_id: int = Depends(get_current_user_id)):
+    parts = [p for p in req.path.split("/") if p]
+    if not parts:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
+    
+    file_name = parts[-1]
+    parent_path = "/" + "/".join(parts[:-1]) if len(parts) > 1 else "/"
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        parent_id = get_parent_dir_id(cursor, user_id, parent_path)
+        
+        # Verificar DataNodes vivos (heartbeat < 30 seg)
+        cursor.execute("SELECT datanode_id, ip_address, port FROM datanodes WHERE status='ACTIVE' AND (strftime('%s', 'now') - strftime('%s', last_heartbeat)) < 30")
+        active_datanodes = cursor.fetchall()
+        
+        if len(active_datanodes) < 2:
+            raise HTTPException(status_code=503, detail="No hay suficientes DataNodes disponibles (se requieren al menos 2)")
+            
+        # Crear entrada del archivo
+        try:
+            if parent_id is None:
+                cursor.execute("INSERT INTO files (user_id, parent_id, name, is_dir, size_bytes) VALUES (?, NULL, ?, 0, ?)", (user_id, file_name, req.file_size))
+            else:
+                cursor.execute("INSERT INTO files (user_id, parent_id, name, is_dir, size_bytes) VALUES (?, ?, ?, 0, ?)", (user_id, parent_id, file_name, req.file_size))
+            file_id = cursor.lastrowid
+        except sqlite3.IntegrityError:
+            raise HTTPException(status_code=400, detail="El archivo ya existe. Utilice 'rm' primero para sobrescribir.")
+            
+        # Calcular particiones
+        import math
+        num_blocks = math.ceil(req.file_size / BLOCK_SIZE_BYTES) if req.file_size > 0 else 1
+        
+        allocated_blocks = []
+        for i in range(num_blocks):
+            block_id = str(uuid.uuid4())
+            block_size = BLOCK_SIZE_BYTES if (i < num_blocks - 1) else (req.file_size % BLOCK_SIZE_BYTES) or BLOCK_SIZE_BYTES
+            
+            cursor.execute("INSERT INTO blocks (file_id, block_index, block_id, size_bytes) VALUES (?, ?, ?, ?)", (file_id, i, block_id, block_size))
+            
+            # Asignar a 2 DataNodes distintos aleatoriamente
+            selected_dns = random.sample(active_datanodes, 2)
+            for dn in selected_dns:
+                cursor.execute("INSERT INTO block_locations (block_id, datanode_id) VALUES (?, ?)", (block_id, dn["datanode_id"]))
+                
+            allocated_blocks.append({
+                "block_id": block_id,
+                "block_index": i,
+                "primary": {"id": selected_dns[0]["datanode_id"], "host": selected_dns[0]["ip_address"], "port": selected_dns[0]["port"]},
+                "replica": {"id": selected_dns[1]["datanode_id"], "host": selected_dns[1]["ip_address"], "port": selected_dns[1]["port"]},
+            })
+            
+        conn.commit()
+        return {"blocks": allocated_blocks}
+
+# ==================== FILE DOWNLOAD (GET) ====================
+@app.post("/files/locations")
+def get_file_locations(req: PathReq, user_id: int = Depends(get_current_user_id)):
+    parts = [p for p in req.path.split("/") if p]
+    if not parts:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
+    
+    file_name = parts[-1]
+    parent_path = "/" + "/".join(parts[:-1]) if len(parts) > 1 else "/"
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        parent_id = get_parent_dir_id(cursor, user_id, parent_path)
+        
+        if parent_id is None:
+            cursor.execute("SELECT id FROM files WHERE user_id=? AND parent_id IS NULL AND name=? AND is_dir=0", (user_id, file_name))
+        else:
+            cursor.execute("SELECT id FROM files WHERE user_id=? AND parent_id=? AND name=? AND is_dir=0", (user_id, parent_id, file_name))
+            
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Archivo no encontrado")
+            
+        file_id = row["id"]
+        
+        cursor.execute("SELECT block_id, block_index, checksum FROM blocks WHERE file_id=? ORDER BY block_index", (file_id,))
+        blocks = cursor.fetchall()
+        
+        result = []
+        for b in blocks:
+            cursor.execute("""
+                SELECT d.datanode_id, d.ip_address, d.port 
+                FROM block_locations bl 
+                JOIN datanodes d ON bl.datanode_id = d.datanode_id 
+                WHERE bl.block_id=? AND d.status='ACTIVE' AND (strftime('%s', 'now') - strftime('%s', d.last_heartbeat)) < 30
+            """, (b["block_id"],))
+            locations = cursor.fetchall()
+            result.append({
+                "block_id": b["block_id"],
+                "block_index": b["block_index"],
+                "checksum": b["checksum"],
+                "locations": [{"id": l["datanode_id"], "host": l["ip_address"], "port": l["port"]} for l in locations]
+            })
+            
+        return {"blocks": result}
